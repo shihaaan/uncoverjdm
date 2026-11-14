@@ -8,7 +8,8 @@ def Y(h): return round(G - h * S, 1)
 def path(d):
     """Convert a mm path (x,h pairs) to px."""
     out = []
-    for tok in re.findall(r'[MLQCZ]|-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?', d):
+    for tok in re.findall(r'[MLQCZS]|-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?', d):
+        if tok == 'S': continue
         if tok in 'MLQCZ': out.append(tok)
         else:
             x, h = tok.split(','); out.append(f"{X(float(x))},{Y(float(h))}")
@@ -16,22 +17,29 @@ def path(d):
 
 
 def _flatten(d):
-    """mm path -> list of (points, closed) per subpath."""
-    toks = re.findall(r'[MLQCZ]|-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?', d)
-    subs = []; cur = None; i = 0
+    """mm path -> list of [points, closed, sharp_indices]. An S token marks the next point as a sharp corner."""
+    toks = re.findall(r'[MLQCZS]|-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?', d)
+    subs = []; cur = None; pend = False
     def pt(t): x, h = t.split(','); return (float(x), float(h))
-    while i < len(toks):
-        t = toks[i]
-        if t == 'M': cur = [pt(toks[i+1])]; subs.append([cur, False]); i += 2
-        elif t == 'L': cur.append(pt(toks[i+1])); i += 2
-        elif t == 'Q':
-            p0 = cur[-1]; c1 = pt(toks[i+1]); p1 = pt(toks[i+2])
-            for k in range(1, 25):
-                u = k / 24
-                cur.append(((1-u)**2*p0[0] + 2*(1-u)*u*c1[0] + u*u*p1[0], (1-u)**2*p0[1] + 2*(1-u)*u*c1[1] + u*u*p1[1]))
-            i += 3
-        elif t == 'Z': subs[-1][1] = True; i += 1
-        else: cur.append(pt(t)); i += 1
+    def add(p):
+        nonlocal pend
+        cur.append(p)
+        if pend: subs[-1][2].add(len(cur) - 1); pend = False
+    mode = 'L'; qb = []
+    for t in toks:
+        if t == 'S': pend = True
+        elif t in 'MLQ': mode = t; qb = []
+        elif t == 'Z': subs[-1][1] = True
+        elif mode == 'M': cur = []; subs.append([cur, False, set()]); add(pt(t)); mode = 'L'
+        elif mode == 'L': add(pt(t))
+        else:
+            qb.append(pt(t))
+            if len(qb) == 2:
+                p0 = cur[-1]; c1, p1 = qb; qb = []
+                for k in range(1, 24):
+                    u = k / 24
+                    cur.append(((1-u)**2*p0[0] + 2*(1-u)*u*c1[0] + u*u*p1[0], (1-u)**2*p0[1] + 2*(1-u)*u*c1[1] + u*u*p1[1]))
+                add(p1)
     return subs
 
 def _resample(pts, step):
@@ -46,29 +54,63 @@ def _resample(pts, step):
     if math.hypot(out[-1][0]-pts[-1][0], out[-1][1]-pts[-1][1]) > 1e-6: out.append(pts[-1])
     return out
 
-def smooth(d, sigma, step=20.0):
-    """Round every corner of a mm path with a Gaussian filter; returns a px path."""
+def _gauss(pts, closed, sigma, step=20.0):
+    """Gaussian-smooth one run of points. Open runs keep their endpoints and end tangents."""
+    if len(pts) < 2: return list(pts)
+    if closed: pts = pts + [pts[0]]
+    total = sum(math.hypot(q[0]-p[0], q[1]-p[1]) for p, q in zip(pts, pts[1:]))
+    if total < 1e-6: return [pts[0]]
+    sg = min(sigma, total / 14.0); st = min(step, max(total / 60.0, 4.0))
+    P = _resample(pts, st)
+    if closed: P = P[:-1]
+    n = len(P)
+    if n < 3 or sg < 1: return pts[:-1] if closed else pts
+    w = int(3 * sg / st) + 1
+    ker = [math.exp(-0.5 * (k * st / sg) ** 2) for k in range(-w, w + 1)]; ks = sum(ker)
+    def at(j):
+        if closed: return P[j % n]
+        if j < 0:  # reflect about the first point so the end tangent survives
+            m = min(-j, n - 1); return (2*P[0][0] - P[m][0], 2*P[0][1] - P[m][1])
+        if j >= n:
+            m = max(2*(n-1) - j, 0); return (2*P[n-1][0] - P[m][0], 2*P[n-1][1] - P[m][1])
+        return P[j]
+    out = []
+    for i in range(n):
+        sx = sy = 0.0
+        for k in range(-w, w + 1):
+            q = at(i + k); sx += q[0] * ker[k + w]; sy += q[1] * ker[k + w]
+        out.append((sx / ks, sy / ks))
+    if not closed: out[0] = P[0]; out[-1] = P[-1]
+    return out
+
+def smooth(d, sigma):
+    """Round every corner of a mm path except those marked S; returns a px path."""
     res = []
-    for pts, closed in _flatten(d):
-        if closed: pts = pts + [pts[0]]
-        total = sum(math.hypot(q[0]-p[0], q[1]-p[1]) for p, q in zip(pts, pts[1:]))
-        sg = min(sigma, total / 14.0); st = min(step, max(total / 60.0, 4.0))
-        P = _resample(pts, st); n = len(P)
-        if closed: P = P[:-1]; n = len(P)
-        w = int(3 * sg / st) + 1
-        ker = [math.exp(-0.5 * (k * st / sg) ** 2) for k in range(-w, w + 1)]; ks = sum(ker)
-        out = []
-        for i in range(n):
-            sx = sy = 0.0
-            for k in range(-w, w + 1):
-                j = i + k
-                j = j % n if closed else min(max(j, 0), n - 1)
-                sx += P[j][0] * ker[k + w]; sy += P[j][1] * ker[k + w]
-            out.append((sx / ks, sy / ks))
-        if not closed: out[0] = P[0]; out[-1] = P[-1]
+    for pts, closed, sharp in _flatten(d):
+        if not sharp:
+            out = _gauss(pts, closed, sigma)
+        else:
+            idx = sorted(sharp)
+            if closed:
+                k = idx[0]; pts = pts[k:] + pts[:k]; idx = [i - k for i in idx]
+                runs = [pts[a:b+1] for a, b in zip(idx, idx[1:] + [len(pts)])]
+                runs[-1] = runs[-1] + [pts[0]]
+            else:
+                cuts = [0] + [i for i in idx if 0 < i < len(pts) - 1] + [len(pts) - 1]
+                runs = [pts[a:b+1] for a, b in zip(cuts, cuts[1:])]
+            out = []
+            for r in runs:
+                sm = _gauss(r, False, sigma)
+                out.extend(sm if not out else sm[1:])
+            if closed: out = out[:-1]
         s = 'M' + ' L'.join(f'{X(x)},{Y(h)}' for x, h in out)
         res.append(s + (' Z' if closed else ''))
     return ' '.join(res)
+
+def is_wing(l, c):
+    """Rear wings and spoilers keep their edges: small polygons high up at the tail."""
+    pts = [p for sub in _flatten(l) for p in sub[0]]
+    return len(pts) >= 4 and min(x for x, h in pts) > 0.8 * c['L'] and min(h for x, h in pts) > 880
 
 def wheel(cx, c):
     r = c['rt'] * S; cy = G - r
@@ -98,10 +140,12 @@ def geom(c):
 
 def car_group(c):
     fx, rx, ra, cy, sy, dx = geom(c)
-    body = smooth(c['top'], c.get('sig', 95)) + f' L{rx+dx:.1f},{sy} A{ra:.1f},{ra:.1f} 0 1 0 {rx-dx:.1f},{sy} L{fx+dx:.1f},{sy} A{ra:.1f},{ra:.1f} 0 1 0 {fx-dx:.1f},{sy} Z'
+    x0mm = (fx - dx - X0) / S; x1mm = (rx + dx - X0) / S
+    full = f"M{x0mm:.1f},{c['hs']} L" + c['top'].strip()[1:] + f" L{x1mm:.1f},{c['hs']}"
+    body = smooth(full, c.get('sig', 125)) + f' A{ra:.1f},{ra:.1f} 0 1 0 {rx-dx:.1f},{sy} L{fx+dx:.1f},{sy} A{ra:.1f},{ra:.1f} 0 1 0 {fx-dx:.1f},{sy}'
     o = [f'<g id="d-{c["id"]}">', f'<path class="ln body-line" pathLength="1" d="{body}"/>']
-    for g in c['glass']: o.append(f'<path class="ln-thin" d="{smooth(g, 42)}"/>')
-    for l in c['lines']: o.append(f'<path class="ln-thin" d="{smooth(l, 26)}"/>')
+    for g in c['glass']: o.append(f'<path class="ln-thin" d="{smooth(g, 58)}"/>')
+    for l in c['lines']: o.append(f'<path class="ln-thin" d="{path(l) if is_wing(l, c) else smooth(l, 36)}"/>')
     for w in c.get('over', []):
         wx = fx if w == 'front' else rx; r2 = ra + 9; d2 = math.sqrt(r2 * r2 - (sy - 6 - cy) ** 2)
         o.append(f'<path class="ln-thin" d="M{wx-d2:.1f},{sy-6} A{r2:.1f},{r2:.1f} 0 1 1 {wx+d2:.1f},{sy-6}"/>')

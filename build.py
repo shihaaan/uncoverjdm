@@ -303,6 +303,7 @@ footer { margin-top: 28px; }
 css = css.replace('.lineage div { border: 1px solid var(--line-faint); padding: 10px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 130px; flex: 1; }\n', '')
 css = css.replace('.lineage div.here { border-color: var(--dim); }\n', '').replace('.lineage b { font-family: var(--font-display); font-weight: 400; font-size: 17px; }\n', '')
 
+FAVICON = open('favicon.txt').read().strip()
 defs = ''.join(car_group(c) for c in CARS)
 page = f'''<!DOCTYPE html>
 <html lang="en">
@@ -310,6 +311,8 @@ page = f'''<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Uncover JDM</title>
+<link rel="icon" type="image/jpeg" href="{FAVICON}">
+<link rel="apple-touch-icon" href="{FAVICON}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=IBM+Plex+Mono:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">

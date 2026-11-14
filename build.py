@@ -154,7 +154,7 @@ def exhibit(c, i):
     spec = ''.join(f'<tr><th scope="row">{e(a)}</th><td>{e(b)}</td></tr>' for a, b in c['spec'])
     rec = ''.join(f'<article><span class="mono">{e(d)}</span><h3>{e(t)}</h3><p>{e(x)}</p></article>' for d, t, x in c['rec'])
     lin = ''
-    for (y, nm, code, cid) in LINEAGE[c['hall']]:
+    for (y, nm, code, cid) in (c.get('lin') or LINEAGE[c['hall']]):
         here = (cid == c['id']) or (code == 'Drawn here')
         inner = f'<span class="mono">{y}</span><b>{e(nm)}</b>' + (f'<span class="mono">{e(code)}</span>' if code else '')
         if cid and cid != c['id']: lin += f'<a class="lin" href="#{cid}">{inner}</a>'
@@ -242,7 +242,7 @@ def home():
     <h1>Japan's legends, <em>on the drawing board.</em></h1>
     <div class="stack">
       <p class="lede">A museum of the cars Japan built for itself. Each exhibit is one drawing sheet: the shape, the numbers, and the story of why the car still matters.</p>
-      <p class="mono">Fourteen exhibits · Six halls · Part of The Uncover Project</p>
+      <p class="mono">Fifteen exhibits · Six halls · Part of The Uncover Project</p>
     </div>
   </div>
   <a class="feature" href="#{f["id"]}" aria-label="Open exhibit 001, the Hakosuka">
@@ -253,7 +253,7 @@ def home():
     </div>
   </a>
   <section>
-    <div class="section-head"><span class="mono">Floor plan</span><h2>Six halls, fourteen drawings</h2></div>
+    <div class="section-head"><span class="mono">Floor plan</span><h2>Six halls, fifteen drawings</h2></div>
     {halls}
   </section>
   <section>
